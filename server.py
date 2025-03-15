@@ -1,16 +1,25 @@
-from flask import Flask, request, jsonify
-import io
 import os
+import io
+import logging
+import numpy as np
 import torch
 import torchaudio
 import torch.nn as nn
 import torch.nn.functional as F
-from flask_cors import CORS
 import soundfile as sf
-import numpy as np
 
-app = Flask(__name__)
-CORS(app)  # Enable cross-origin requests
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create the Flask app with static folder for frontend (adjust path as needed)
+app = Flask(__name__, static_folder="../client/dist", static_url_path="/")
+CORS(app)  # Enable CORS for all routes
+
+# Set secret key from environment or generate one
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 
 
@@ -65,7 +74,7 @@ class ImprovedAudioClassifier(nn.Module):
         identity2 = self.downsample2(x)
         x = F.relu(self.bn2a(self.conv2a(x)))
         x = self.bn2b(self.conv2b(x))
-        x = F.relu(x + identity2)  # Residual connection
+        x = F.relu(x + identity2)
         x = self.pool2(x)
         x = self.dropout(x)
 
@@ -73,7 +82,7 @@ class ImprovedAudioClassifier(nn.Module):
         identity3 = self.downsample3(x)
         x = F.relu(self.bn3a(self.conv3a(x)))
         x = self.bn3b(self.conv3b(x))
-        x = F.relu(x + identity3)  # Residual connection
+        x = F.relu(x + identity3)
         x = self.pool3(x)
         x = self.dropout(x)
 
@@ -124,7 +133,7 @@ def preprocess_audio_file(
             padding = torch.zeros(1, max_samples - waveform.shape[1])
             waveform = torch.cat([waveform, padding], dim=1)
 
-        # Compute Mel spectrogram with updated parameters
+        # Compute Mel spectrogram
         mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=target_sample_rate,
             n_mels=128,
@@ -133,9 +142,9 @@ def preprocess_audio_file(
             power=2.0,
         )
         mel_spec = mel_transform(waveform)
-        mel_spec = torch.log1p(mel_spec)  # log transformation
+        mel_spec = torch.log1p(mel_spec)
 
-        # Compute MFCC features with updated parameters
+        # Compute MFCC features
         mfcc_transform = torchaudio.transforms.MFCC(
             sample_rate=target_sample_rate,
             n_mfcc=20,
@@ -147,46 +156,44 @@ def preprocess_audio_file(
         mel_spec = (mel_spec - mel_spec.mean()) / (mel_spec.std() + 1e-9)
         mfcc = (mfcc - mfcc.mean()) / (mfcc.std() + 1e-9)
 
-        # Remove extra channel dimension from both (if present)
-        mel_spec = mel_spec.squeeze(0)  # now shape: [128, T]
-        mfcc = mfcc.squeeze(0)  # now shape: [20, T]
+        # Remove extra channel dimension if present
+        mel_spec = mel_spec.squeeze(0)  # shape: [128, T]
+        mfcc = mfcc.squeeze(0)  # shape: [20, T]
 
-        # Concatenate along the feature dimension
+        # Concatenate features
         combined = torch.cat([mel_spec, mfcc], dim=0)  # shape: [148, T]
 
-        # Force the time dimension to be exactly T_fixed using interpolation
-        combined = combined.unsqueeze(0)  # shape: [1, 148, T]
+        # Force time dimension to T_fixed using interpolation
+        combined = combined.unsqueeze(0)  # [1, 148, T]
         combined = F.interpolate(
             combined, size=T_fixed, mode="linear", align_corners=False
         )
-        combined = combined.squeeze(0)  # shape: [148, T_fixed]
+        combined = combined.squeeze(0)  # [148, T_fixed]
 
         # Add channel dimension for CNN input -> [1, 148, T_fixed]
         combined = combined.unsqueeze(0)
         return combined
 
     except Exception as e:
-        print(f"Error in preprocessing: {e}")
+        logger.error(f"Error in preprocessing: {e}")
         return None
 
 
 # =========================
 # Classification Function
 # =========================
-def classify_audio_clip(file):
+def classify_audio_clip(file_path):
     try:
-        # Read the file using soundfile
-        audio_data, sr = sf.read(file)
-
-        # Preprocess the audio to obtain combined features
+        # Read file using soundfile
+        audio_data, sr = sf.read(file_path)
         features = preprocess_audio_file(audio_data, sr)
         if features is None:
             return None
 
-        # Add batch dimension: final shape [1, 1, 148, T_fixed]
+        # Add batch dimension: [1, 1, 148, T_fixed]
         features = features.unsqueeze(0)
 
-        # Load the improved model
+        # Load model
         model_path = os.environ.get("MODEL_PATH", "./audio_classifier_improved.pth")
         classifier = ImprovedAudioClassifier(n_classes=2)
         classifier.load_state_dict(
@@ -199,17 +206,15 @@ def classify_audio_clip(file):
             outputs = classifier(features)
             probs = F.softmax(outputs, dim=1).cpu().numpy()[0]
 
-        # Convert probabilities to Python float percentages
         fake_prob = float(probs[0] * 100)
         real_prob = float(probs[1] * 100)
         final_label = (
             "FAKE (deepfake)" if fake_prob > real_prob else "REAL (human voice)"
         )
-
         return fake_prob, real_prob, final_label
 
     except Exception as e:
-        print(f"Error in classification: {e}")
+        logger.error(f"Error in classification: {e}")
         return None
 
 
@@ -219,31 +224,30 @@ def classify_audio_clip(file):
 @app.route("/api/upload", methods=["POST"])
 @app.route("/upload", methods=["POST"])
 def upload():
-    print("🔹 Upload route triggered")
+    logger.info("Upload route triggered")
     if "file" not in request.files:
-        print("⚠️ No file part in request")
+        logger.warning("No file part in request")
         return jsonify(error="No file part in request"), 400
 
     file = request.files["file"]
     if file.filename == "":
-        print("⚠️ No selected file")
+        logger.warning("No selected file")
         return jsonify(error="No file selected"), 400
 
-    print(f"✅ Received file: {file.filename}")
+    logger.info(f"Received file: {file.filename}")
 
-    # Save file temporarily for processing
-    temp_path = os.path.join("uploads", file.filename)
-    os.makedirs("uploads", exist_ok=True)
+    # Save file temporarily
+    temp_dir = "uploads"
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, file.filename)
     file.save(temp_path)
 
     result = classify_audio_clip(temp_path)
-
-    # Remove the temporary file
     os.remove(temp_path)
 
     if result is not None:
         fake_prob, real_prob, final_label = result
-        print(f"✅ Classification result: {final_label} (Fake: {fake_prob:.2f}%)")
+        logger.info(f"Classification result: {final_label} (Fake: {fake_prob:.2f}%)")
         return jsonify(
             {
                 "label": final_label,
@@ -252,9 +256,20 @@ def upload():
             }
         )
     else:
-        print("❌ Audio processing error")
+        logger.error("Audio processing error")
         return jsonify(error="Audio processing error"), 500
 
 
+# Optional: Serve static files (e.g., your frontend build)
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_static(path):
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, "index.html")
+
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    # In production, disable debug and use a WSGI server like Gunicorn.
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
