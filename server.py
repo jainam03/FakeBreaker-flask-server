@@ -12,7 +12,7 @@ import numpy as np
 app = Flask(__name__)
 CORS(
     app,
-    origins=["https://fakebreaker-vite-client-dxk5.onrender.com/"],
+    origins=["https://fakebreaker-vite-client-dxk5.onrender.com"],
     supports_credentials=True,
 )  # Enable cross-origin requests
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
