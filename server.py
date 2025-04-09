@@ -8,11 +8,12 @@ import torch.nn.functional as F
 from flask_cors import CORS
 import soundfile as sf
 import numpy as np
+from werkzeug.exceptions import RequestEntityTooLarge
 
 app = Flask(__name__)
 CORS(
     app,
-    origins=["https://fakebreaker-vite-client-dxk5.onrender.com"],
+    origins=["https://fakebreaker-vite-client-dxk5.onrender.com", "http://localhost:5173"],
     supports_credentials=True,
 )  # Enable cross-origin requests
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
@@ -180,7 +181,12 @@ def preprocess_audio_file(
 def classify_audio_clip(file):
     try:
         # Read the file using soundfile
-        audio_data, sr = sf.read(file)
+        # audio_data, sr = sf.read(file)
+        #Load only first 10 seconds of audio to save memory
+        info = sf.info(file)
+        sr = info.samplerate
+        max_samples = int( sr * 10 )
+        audio_data, _ = sf.read(file, stop=max_samples)
 
         # Preprocess the audio to obtain combined features
         features = preprocess_audio_file(audio_data, sr)
@@ -253,12 +259,17 @@ def upload():
                 "label": final_label,
                 "fake_probability": fake_prob,
                 "real_probability": real_prob,
+                "note": "Only the first 10 seconds of audio were used for analysis"
             }
         )
     else:
         print("❌ Audio processing error")
         return jsonify(error="Audio processing error"), 500
 
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_large_file(e):
+    return jsonify(error="File is too large. Please upload a file under 16 MB.")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
