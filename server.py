@@ -105,7 +105,7 @@ class ImprovedAudioClassifier(nn.Module):
 # Preprocessing Function
 # =========================
 def preprocess_audio_file(
-    audio_data, sr, target_sample_rate=10000, max_duration=10.0, T_fixed=300
+    audio_data, sr, target_sample_rate=10000, max_duration=20.0, T_fixed=300
 ):
     try:
         # Convert to mono if needed
@@ -182,10 +182,10 @@ def classify_audio_clip(file):
     try:
         # Read the file using soundfile
         # audio_data, sr = sf.read(file)
-        #Load only first 10 seconds of audio to save memory
+        #Load only first 20 seconds of audio to save memory
         info = sf.info(file)
         sr = info.samplerate
-        max_samples = int( sr * 10 )
+        max_samples = int( sr * 20 )
         audio_data, _ = sf.read(file, stop=max_samples)
 
         # Preprocess the audio to obtain combined features
@@ -259,7 +259,7 @@ def upload():
                 "label": final_label,
                 "fake_probability": fake_prob,
                 "real_probability": real_prob,
-                "note": "Only the first 10 seconds of audio were used for analysis"
+                "note": "Only the first 20 seconds of audio were used for analysis"
             }
         )
     else:
