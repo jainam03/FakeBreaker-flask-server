@@ -13,7 +13,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 app = Flask(__name__)
 CORS(
     app,
-    origins=["https://fakebreaker-vite-client-dxk5.onrender.com", "http://localhost:5173"],
+    origins=["https://fakebreaker-vite-client-dxk5.onrender.com", "https://fakebreaker.vercel.app", "http://localhost:5173"],
     supports_credentials=True,
     methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
