@@ -16,8 +16,11 @@ CORS(
     origins=["https://fakebreaker-vite-client-dxk5.onrender.com", "https://fakebreaker.vercel.app", "http://localhost:5173"],
     supports_credentials=True,
     methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization"],
-)  # Enable cross-origin requests
+    allow_headers=["Content-Type", "Authorization", "Accept"],
+    expose_headers=["Content-Type", "X-CSRFToken"],
+    max_age=3600,
+    vary_header=True
+)# Enable cross-origin requests
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 
 
