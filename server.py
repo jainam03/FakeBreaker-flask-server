@@ -9,20 +9,56 @@ from flask_cors import CORS
 import soundfile as sf
 import numpy as np
 from werkzeug.exceptions import RequestEntityTooLarge
+import time
 
 app = Flask(__name__)
 CORS(
     app,
-    origins=["https://fakebreaker-vite-client-dxk5.onrender.com", "https://fakebreaker.vercel.app", "http://localhost:5173"],
-    supports_credentials=True,
-    methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization", "Accept"],
-    expose_headers=["Content-Type", "X-CSRFToken"],
-    max_age=3600,
-    vary_header=True
-)# Enable cross-origin requests
+    resources={r"/*": {
+        "origins": ["https://fakebreaker.vercel.app", "http://localhost:5173"],
+        "methods": ["GET", "POST", "OPTIONS", "PUT", "DELETE"],
+        "allow_headers": ["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
+        "expose_headers": ["Content-Type", "X-CSRFToken"],
+        "supports_credentials": True,
+        "max_age": 3600
+    }},
+    supports_credentials=True
+)
+
+# Add CORS headers to all responses
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', 'https://fakebreaker.vercel.app')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin,X-Requested-With')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
+# Configure app
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['UPLOAD_FOLDER'] = 'uploads'
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 
+# Create uploads directory if it doesn't exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Add a health check endpoint
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy"}), 200
+
+# Add error handlers
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify(error="File is too large. Please upload a file under 16 MB."), 413
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    return jsonify(error="Internal server error. Please try again later."), 500
+
+@app.errorhandler(503)
+def service_unavailable(error):
+    return jsonify(error="Service temporarily unavailable. Please try again in a few moments."), 503
 
 # =========================
 # Improved Audio Classifier Model
@@ -234,47 +270,47 @@ def classify_audio_clip(file):
 @app.route("/api/upload", methods=["POST"])
 @app.route("/upload", methods=["POST"])
 def upload():
-    print("🔹 Upload route triggered")
-    if "file" not in request.files:
-        print("⚠️ No file part in request")
-        return jsonify(error="No file part in request"), 400
+    try:
+        print("🔹 Upload route triggered")
+        if "file" not in request.files:
+            print("⚠️ No file part in request")
+            return jsonify(error="No file part in request"), 400
 
-    file = request.files["file"]
-    if file.filename == "":
-        print("⚠️ No selected file")
-        return jsonify(error="No file selected"), 400
+        file = request.files["file"]
+        if file.filename == "":
+            print("⚠️ No selected file")
+            return jsonify(error="No file selected"), 400
 
-    print(f"✅ Received file: {file.filename}")
+        print(f"✅ Received file: {file.filename}")
 
-    # Save file temporarily for processing
-    temp_path = os.path.join("uploads", file.filename)
-    os.makedirs("uploads", exist_ok=True)
-    file.save(temp_path)
+        # Save file temporarily for processing
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+        file.save(temp_path)
 
-    result = classify_audio_clip(temp_path)
+        try:
+            result = classify_audio_clip(temp_path)
+            if result is not None:
+                fake_prob, real_prob, final_label = result
+                print(f"✅ Classification result: {final_label} (Fake: {fake_prob:.2f}%)")
+                return jsonify(
+                    {
+                        "label": final_label,
+                        "fake_probability": fake_prob,
+                        "real_probability": real_prob,
+                    }
+                )
+            else:
+                print("❌ Audio processing error")
+                return jsonify(error="Audio processing error"), 500
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
-    # Remove the temporary file
-    os.remove(temp_path)
-
-    if result is not None:
-        fake_prob, real_prob, final_label = result
-        print(f"✅ Classification result: {final_label} (Fake: {fake_prob:.2f}%)")
-        return jsonify(
-            {
-                "label": final_label,
-                "fake_probability": fake_prob,
-                "real_probability": real_prob,
-            }
-        )
-    else:
-        print("❌ Audio processing error")
-        return jsonify(error="Audio processing error"), 500
-
-
-@app.errorhandler(RequestEntityTooLarge)
-def handle_large_file(e):
-    return jsonify(error="File is too large. Please upload a file under 16 MB.")
+    except Exception as e:
+        print(f"❌ Error in upload route: {str(e)}")
+        return jsonify(error="An unexpected error occurred. Please try again."), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)  # Set debug to False in production

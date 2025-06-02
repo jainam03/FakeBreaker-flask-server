@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: fakebreaker-flask-server
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 4 --bind 0.0.0.0:$PORT server:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: PORT
+        value: 10000
+    healthCheckPath: /health
+    autoDeploy: true
+    plan: standard
+    disk:
+      name: tmp
+      mountPath: /tmp
+      sizeGB: 1 
